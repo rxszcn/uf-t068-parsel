@@ -8,6 +8,7 @@ import weakref
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+from cssselect.parser import SelectorSyntaxError
 from lxml import etree
 
 import parsel.selector as selector_module
@@ -601,6 +602,174 @@ class TestSelector:
 
         x.register_namespace("p", "http://www.scrapy.org/product")
         assert x.xpath("//p:SecondTestTag/xmlns:material/text()").extract()[0] == "iron"
+
+    # ``item`` inside ``feed`` is in the default namespace, while the outer
+    # ``item`` is in no namespace at all, so both ``d|item`` and ``|item`` can
+    # be exercised on the same document.
+    _NAMESPACED_BODY = """<?xml version="1.0" encoding="UTF-8"?>
+<root>
+    <feed xmlns="http://example.com/default"
+          xmlns:a="http://example.com/a"
+          xmlns:b="http://example.com/b">
+        <a:item b:tag="first" id="one">
+            <a:name>alpha</a:name>
+            <b:role>admin</b:role>
+        </a:item>
+        <a:item b:tag="second" id="two">
+            <a:name>beta</a:name>
+            <b:role>user</b:role>
+        </a:item>
+        <item>in default namespace</item>
+    </feed>
+    <item>no namespace prefix</item>
+</root>
+    """
+    _CSS_NAMESPACES = {
+        "a": "http://example.com/a",
+        "b": "http://example.com/b",
+        "d": "http://example.com/default",
+    }
+
+    def _namespaced_selector(self) -> Selector:
+        return self.sscls(text=self._NAMESPACED_BODY, type="xml")
+
+    def test_css_namespaces_adhoc(self) -> None:
+        sel = self._namespaced_selector()
+        namespaces = self._CSS_NAMESPACES
+
+        # The prefix works only when the mapping is passed to the query, and
+        # the error raised without it keeps the existing ValueError form.
+        with pytest.raises(ValueError, match="Undefined namespace prefix"):
+            sel.css("a|item")
+        assert sel.css("a|item::attr(id)", namespaces=namespaces).getall() == [
+            "one",
+            "two",
+        ]
+
+        # The mapping is not saved on the selector, unlike register_namespace().
+        assert "a" not in sel.namespaces
+        assert "b" not in sel.namespaces
+        with pytest.raises(ValueError, match="Undefined namespace prefix"):
+            sel.css("a|item")
+
+    def test_css_namespaces_does_not_pollute_registered_state(self) -> None:
+        sel = self._namespaced_selector()
+        registered = dict(sel.namespaces)
+        sel.css("a|item", namespaces=self._CSS_NAMESPACES)
+        # Neither the registered prefixes nor their URIs are modified.
+        assert sel.namespaces == registered
+        assert "a" not in sel.namespaces
+
+    def test_css_namespaces_combines_with_registered_namespaces(self) -> None:
+        sel = self._namespaced_selector()
+        sel.register_namespace("a", "http://example.com/a")
+
+        # The registered prefix keeps working without an ad-hoc mapping.
+        assert sel.css("a|name::text").getall() == ["alpha", "beta"]
+
+        # Ad-hoc prefixes supplement the registered ones for a single query.
+        assert sel.css(
+            "a|item[b|tag='first']", namespaces={"b": "http://example.com/b"}
+        ).css("a|name::text").getall() == ["alpha"]
+
+        # The ad-hoc "b" prefix is not saved.
+        with pytest.raises(ValueError, match="Undefined namespace prefix"):
+            sel.css("b|role")
+        # The registered "a" prefix is still available.
+        assert sel.css("a|name::text").getall() == ["alpha", "beta"]
+
+    def test_css_namespaces_attribute_selectors_and_pseudo_elements(self) -> None:
+        sel = self._namespaced_selector()
+        namespaces = self._CSS_NAMESPACES
+
+        # Namespaced attribute selector combined with the ::text pseudo-element.
+        assert sel.css(
+            "a|item[b|tag='second'] a|name::text", namespaces=namespaces
+        ).getall() == ["beta"]
+
+        # Namespaced existence attribute selector.
+        assert sel.css(
+            "a|item[b|tag]::attr(id)", namespaces=namespaces
+        ).getall() == ["one", "two"]
+
+        # Unprefixed ::attr() reads an unprefixed attribute on a namespaced
+        # element, while namespaced attributes go through [prefix|name].
+        assert sel.css(
+            "a|item::attr(id)", namespaces=namespaces
+        ).getall() == ["one", "two"]
+        assert sel.css(
+            "a|item[b|tag='first']::attr(id)", namespaces=namespaces
+        ).getall() == ["one"]
+
+        # Pseudo-elements on a descendant with its own namespace prefix.
+        assert sel.css(
+            "a|item b|role::text", namespaces=namespaces
+        ).getall() == ["admin", "user"]
+
+    def test_css_namespaces_attr_pseudo_element_rejects_prefixed_name(self) -> None:
+        # cssselect cannot parse a namespace prefix inside ::attr(); the
+        # namespaces argument does not change that parsing-time limitation.
+        # Namespaced attributes must be selected with the [prefix|name]
+        # attribute selector instead.
+        sel = self._namespaced_selector()
+        with pytest.raises(SelectorSyntaxError):
+            sel.css("a|item::attr(b|tag)", namespaces=self._CSS_NAMESPACES)
+
+    def test_css_namespaces_wildcard_and_no_namespace(self) -> None:
+        sel = self._namespaced_selector()
+        namespaces = self._CSS_NAMESPACES
+
+        # The namespace wildcard and the no-namespace syntax need no mapping.
+        assert sel.css("*|name::text").getall() == ["alpha", "beta"]
+        assert sel.css("|item::text").getall() == ["no namespace prefix"]
+        assert sel.css("d|item::text", namespaces=namespaces).getall() == [
+            "in default namespace"
+        ]
+        # They also work alongside ad-hoc prefixes in the same query.
+        assert sel.css("a|item *|role::text", namespaces=namespaces).getall() == [
+            "admin",
+            "user",
+        ]
+
+    def test_css_namespaces_selectorlist_entry(self) -> None:
+        sel = self._namespaced_selector()
+        namespaces = self._CSS_NAMESPACES
+
+        assert sel.css("d|feed", namespaces=namespaces).css(
+            "a|name::text", namespaces=namespaces
+        ).getall() == ["alpha", "beta"]
+
+        # Ad-hoc mappings do not propagate to chained selectors, as with xpath().
+        with pytest.raises(ValueError, match="Undefined namespace prefix"):
+            sel.css("d|feed", namespaces=namespaces).css("a|name::text")
+
+    def test_css_and_xpath_namespaces_parity(self) -> None:
+        sel = self._namespaced_selector()
+        namespaces = self._CSS_NAMESPACES
+        # Each CSS query and its hand-written XPath counterpart encode the same
+        # selection semantics and must return identical results on this document.
+        cases = [
+            ("a|item", "//a:item"),
+            ("a|item::text", "//a:item/text()"),
+            ("a|name::text", "//a:name/text()"),
+            ("b|role::text", "//b:role/text()"),
+            ("a|item::attr(id)", "//a:item/@id"),
+            ("a|item[b|tag]::attr(id)", "//a:item[@b:tag]/@id"),
+            ("a|item[b|tag='first']", "//a:item[@b:tag='first']"),
+            ("a|item[b|tag] a|name::text", "//a:item[@b:tag]/a:name/text()"),
+            ("*|name::text", "//*[local-name() = 'name']/text()"),
+            (
+                "|item::text",
+                "//*[local-name() = 'item' and namespace-uri() = '']/text()",
+            ),
+            ("d|item::text", "//d:item/text()"),
+        ]
+        for css_query, xpath_query in cases:
+            assert sel.css(
+                css_query, namespaces=namespaces
+            ).getall() == sel.xpath(
+                xpath_query, namespaces=namespaces
+            ).getall(), (css_query, xpath_query)
 
     def test_make_links_absolute(self) -> None:
         text = '<a href="file.html">link to file</a>'

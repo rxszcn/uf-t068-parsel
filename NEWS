@@ -3,6 +3,19 @@
 History
 -------
 
+(unreleased)
+~~~~~~~~~~~~
+
+* Added a ``namespaces`` argument to :meth:`Selector.css` and
+  :meth:`SelectorList.css`, mirroring the one already accepted by
+  :meth:`Selector.xpath`. The ``prefix: namespace-uri`` mapping it receives
+  only applies to the CSS query of that call and is not saved on the
+  selector, so temporary namespace prefixes no longer require
+  :meth:`~Selector.register_namespace` calls or manual cleanup of the
+  registered state. CSS prefixes use the ``prefix|name`` syntax and the
+  argument has the same temporary, non-persistent semantics as in
+  :meth:`~Selector.xpath`.
+
 1.12.1 (2026-09-28)
 ~~~~~~~~~~~~~~~~~~~
 

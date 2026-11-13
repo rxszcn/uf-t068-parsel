@@ -1133,6 +1133,41 @@ like this::
       sel.register_namespace("g", "http://base.google.com/ns/1.0")
       sel.xpath("//g:price").getall()
 
+Registering a namespace with
+:meth:`~parsel.selector.Selector.register_namespace` saves it on the selector
+for every later query. Both :meth:`~parsel.selector.Selector.xpath` and
+:meth:`~parsel.selector.Selector.css` also accept a ``namespaces`` argument
+with a ``prefix: namespace-uri`` mapping that applies to that single query
+only and is never saved on the selector::
+
+      sel.xpath(
+          "//g:price",
+          namespaces={"g": "http://base.google.com/ns/1.0"},
+      ).getall()
+      sel.css(
+          "g|price",
+          namespaces={"g": "http://base.google.com/ns/1.0"},
+      ).getall()
+
+The two entries share the same temporary, non-persistent semantics, but the
+CSS entry differs in two ways:
+
+* CSS namespace prefixes use the CSS ``prefix|name`` syntax (e.g.
+  ``"g|price"``), not the XPath ``prefix:name`` syntax (``"g:price"``).
+* The mapping only needs to list prefixes actually written with the
+  ``prefix|`` syntax. The namespace wildcard (``*|name``) and the
+  no-namespace syntax (``|name``) work without any entry, and an unregistered
+  prefix raises the same :class:`ValueError` as an XPath query with an
+  undefined namespace prefix.
+
+Namespaced attributes are selected with the ``[prefix|name]`` attribute
+selector, which also combines with pseudo-elements::
+
+      sel.css(
+          "g|item[g|id='1']::text",
+          namespaces={"g": "http://base.google.com/ns/1.0"},
+      ).getall()
+
 .. _removing-namespaces:
 
 Removing namespaces

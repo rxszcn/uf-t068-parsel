@@ -243,14 +243,23 @@ class SelectorList(list[_SelectorType]):
             flatten([x._xpath(xpath, namespaces, kwargs) for x in self])
         )
 
-    def css(self, query: str) -> SelectorList[_SelectorType]:
+    def css(
+        self,
+        query: str,
+        namespaces: Mapping[str, str] | None = None,
+    ) -> SelectorList[_SelectorType]:
         """
         Call the ``.css()`` method for each element in this list and return
         their results flattened as another :class:`SelectorList`.
 
         ``query`` is the same argument as the one in :meth:`Selector.css`
+
+        ``namespaces`` is the same argument as the one in
+        :meth:`Selector.css`.
         """
-        return self.__class__(flatten([x.css(query) for x in self]))
+        return self.__class__(
+            flatten([x.css(query, namespaces=namespaces) for x in self])
+        )
 
     def re(self, regex: str | Pattern[str], replace_entities: bool = True) -> list[str]:
         """
@@ -809,7 +818,11 @@ class Selector:
         ]
         return typing.cast("SelectorList[Self]", self.selectorlist_cls(result))
 
-    def css(self, query: str) -> SelectorList[Self]:
+    def css(
+        self,
+        query: str,
+        namespaces: Mapping[str, str] | None = None,
+    ) -> SelectorList[Self]:
         """
         Apply the given CSS selector and return a :class:`SelectorList` instance.
 
@@ -818,11 +831,27 @@ class Selector:
         In the background, CSS queries are translated into XPath queries using
         `cssselect`_ library and run ``.xpath()`` method.
 
+        ``namespaces`` is an optional ``prefix: namespace-uri`` mapping (dict)
+        for the namespace prefixes used in the CSS query with the
+        ``prefix|selector`` syntax, in addition to those registered with
+        ``register_namespace(prefix, uri)``. As with :meth:`xpath`, these
+        prefixes are not saved for future calls.
+
+        The semantics differ slightly from the ``namespaces`` argument of
+        :meth:`xpath`: CSS namespace prefixes are written with the CSS
+        ``prefix|name`` syntax (e.g. ``"somens|a"``) rather than the XPath
+        ``prefix:name`` syntax, and the mapping only needs to cover prefixes
+        used that way. The CSS namespace wildcard (``*|name``) and the
+        no-namespace syntax (``|name``) do not require any entry in
+        ``namespaces``. An unregistered prefix still raises the same
+        :class:`ValueError` as an :meth:`xpath` query with an undefined
+        namespace prefix.
+
         .. _cssselect: https://pypi.python.org/pypi/cssselect/
         """
         if self.type not in ("html", "xml", "text"):
             raise ValueError(f"Cannot use css on a Selector of type {self.type!r}")
-        return self.xpath(self._css2xpath(query))
+        return self.xpath(self._css2xpath(query), namespaces=namespaces)
 
     def _css2xpath(self, query: str) -> str:
         type_ = _xml_or_html(self.type)

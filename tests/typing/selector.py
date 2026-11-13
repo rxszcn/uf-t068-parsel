@@ -16,6 +16,12 @@ def correct() -> None:
     xpath_values: list[str] = selector.xpath(
         "//somens:a/text()", namespaces={"somens": "http://scrapy.org"}
     ).extract()
+    css_values: list[str] = selector.css(
+        "somens|a", namespaces={"somens": "http://scrapy.org"}
+    ).getall()
+    css_list_values: list[str] = selector.css("body").css(
+        "somens|a", namespaces={"somens": "http://scrapy.org"}
+    ).getall()
 
     class MySelector(Selector):
         def my_own_func(self) -> int:
@@ -47,6 +53,12 @@ def incorrect() -> None:
         "//somens:a/text()",
         namespaces='{"somens": "http://scrapy.org"}',  # type: ignore[arg-type]
     ).extract()
+
+    # Cannot use a string to define namespaces in css either.
+    selector.css(
+        "somens|a",
+        namespaces='{"somens": "http://scrapy.org"}',  # type: ignore[arg-type]
+    ).getall()
 
     # Typo in the extract method name.
     selector.css("li").extact()  # type: ignore[attr-defined]
